@@ -35,7 +35,7 @@
 	compatible = "h3c,rc3000", "qcom,ipq5018";
 
 	aliases {
-		label-mac-device = <&gmac0>;
+		label-mac-device = <&dp1>;
 
 		serial0 = &blsp1_uart1;
 	};
@@ -168,23 +168,16 @@
  * ===============================================================
  */
 
-&uniphy0 {
-	status = "okay";
-
-	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
-	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
-};
-
-// gmac0 -> 内部 GE PHY -> WAN
-&gmac0 {
+// dp1 (=MAC0) -> 内部 GE PHY -> 内部交换机 port -> WAN
+&dp1 {
 	status = "okay";
 
 	nvmem-cell-names = "mac-address";
 	nvmem-cells = <&macaddr_art_0 (0)>;
 };
 
-// gmac1 -> SGMII -> 外部 QCA8337
-&gmac1 {
+// dp2 (=MAC1) -> SGMII -> 外部 QCA8337
+&dp2 {
 	status = "okay";
 
 	phy-mode = "sgmii";
@@ -207,6 +200,32 @@
 
 &ge_phy {
 	qcom,dac-preset-short-cable;
+};
+
+// 内部 ESS 交换机（QCA MP）：dp1 经 GE Phy(phy7) 出 WAN，
+// dp2 经 SGMII 通道连外部 QCA8337（port6）。结构与 mr3000d-ci 一致（已验证可编译/启动）。
+&switch {
+	status = "okay";
+
+	// dp2(MAC1) 经 SGMII 连外部 QCA8337，需使能 uniphy SGMII 通道
+	switch_mac_mode = <MAC_MODE_SGMII_CHANNEL0>;
+
+	qcom,port_phyinfo {
+		// MAC0 (dp1) -> 内部 GE Phy (phy7, mdio0) -> 内部交换机 -> WAN
+		port@1 {
+			port_id = <1>;
+			mdiobus = <&mdio0>;
+			phy_address = <7>;
+		};
+
+		// MAC1 (dp2) -> SGMII -> 外部 QCA8337 SerDes (port6)
+		port@2 {
+			port_id = <2>;
+			mdiobus = <&mdio1>;
+			forced-speed = <1000>;
+			forced-duplex = <1>;
+		};
+	};
 };
 
 &mdio1 {
@@ -261,7 +280,7 @@
 			ethernet-port@6 {
 				reg = <6>;
 				phy-mode = "sgmii";
-				ethernet = <&gmac1>;
+				ethernet = <&dp2>;
 				qca,sgmii-enable-pll;
 
 				fixed-link {
