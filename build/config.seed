@@ -3,9 +3,10 @@ CONFIG_TARGET_qualcommax_ipq50xx=y
 # 多设备 Profile 模式：只有显式选中的设备才会被编出镜像（否则只编 subtarget 默认参考机）
 CONFIG_TARGET_MULTI_PROFILE=y
 # OpenWrt Kconfig 设备选择符号格式：CONFIG_TARGET_DEVICE_<board>_<subtarget>_DEVICE_<PROFILE>
-# PROFILE 保持设备定义名原样（即小写 h3c_rc3000，不是大写）。正确前缀 TARGET_DEVICE_（之前漏写 DEVICE_ 导致不生效）。
-# 注意：build.sh 会在 defconfig 后从 tmp/.config-target.in 精确抓取真实符号再写入，这里仅供参考/兜底。
-CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000=y
+# PROFILE 名经构建系统 uc() 全大写、破折号转下划线：h3c_rc3000 -> H3C_RC3000
+# （铁证：同仓库 cmcc_mr3000d-ci 用大写 DEVICE_CMCC_MR3000D_CI 成功选中并编出镜像）。
+# 前缀必须为 TARGET_DEVICE_（之前漏写 DEVICE_ 导致符号不生效，只出了默认参考机）。
+CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_H3C_RC3000=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
 CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y
 CONFIG_TARGET_ROOTFS_SQUASHFS=y

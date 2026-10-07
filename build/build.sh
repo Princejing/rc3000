@@ -97,22 +97,17 @@ echo ">>> 应用配置"
 cp "$ROOT/build/config.seed" .config
 make defconfig
 
-# 确保 h3c_rc3000 设备被选中：直接从构建系统生成的 tmp/.config-target.in 读取真实符号名。
-# 符号格式：TARGET_DEVICE_<board>_<subtarget>_DEVICE_<profile>
-# 注意 tmp/.config-target.in 里每个设备有两条：
-#   config TARGET_DEVICE_<...>_DEVICE_<profile>          （选设备本身 —— 我们要这个）
-#   config TARGET_DEVICE_PACKAGES_<...>_DEVICE_<profile> （选默认包集 —— 不是设备选择符号，写了 Kconfig 报 unexpected data 被忽略）
-# 正则必须精确排除 PACKAGES 前缀，否则会误抓无效符号 → 设备不被选中 → 无镜像产出（前一轮就栽在这）。
-SYM=$(grep -iE '^[[:space:]]*config TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000$' "$SRC/tmp/.config-target.in" 2>/dev/null | head -1 | awk '{print $2}')
-if [ -n "$SYM" ]; then
-  echo ">>> 自动选中设备符号(真实): $SYM"
-  sed -i "s/# $SYM is not set/$SYM=y/" .config
-  grep -q "^$SYM=y\$" .config || echo "$SYM=y" >> .config
-  make defconfig
-else
-  echo "错误: 未在 tmp/.config-target.in 找到真正的设备选择符号 TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000（注意不是 PACKAGES 变体），设备定义可能未注册" >&2
+# 守卫式校验：确认 h3c_rc3000 已被选中。
+# 符号大小写规则由 OpenWrt 构建系统 uc() 决定：profile 名全大写、破折号转下划线，
+# 即 h3c_rc3000 -> H3C_RC3000（铁证：同仓库 cmcc_mr3000d-ci 用大写 DEVICE_CMCC_MR3000D_CI 成功选中）。
+# 放在 if ! 条件里，grep 失败只会让 if 为假，不会因 set -e 神秘退出；
+# 若仍未选中则打印 .config 中真实存在的 TARGET_DEVICE 符号，供下一轮精准修正。
+if ! grep -qxF "CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_H3C_RC3000=y" .config; then
+  echo "错误: h3c_rc3000 未被选中。.config 中现有 TARGET_DEVICE 符号：" >&2
+  grep -E '^CONFIG_TARGET_DEVICE_' .config >&2 || echo "(无任何 TARGET_DEVICE 符号)" >&2
   exit 1
 fi
+echo ">>> 已确认 h3c_rc3000 设备被选中，继续编译"
 
 # 注：独立 DTS 语法校验需内核 dtsi（编译期才就绪），此处跳过；
 #     DTS 错误会在下面 make 阶段由内核 dtc 暴露，见 build/build.log。
