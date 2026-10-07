@@ -97,16 +97,21 @@ echo ">>> 应用配置"
 cp "$ROOT/build/config.seed" .config
 make defconfig
 
-# 确保 h3c_rc3000 设备被选中：直接从构建系统生成的 tmp/.config-target.in 读取真实符号名，
-# 避免硬编码前缀/大小写出错（符号格式 CONFIG_TARGET_DEVICE_<board>_<subtarget>_DEVICE_<PROFILE大写>）
-SYM=$(grep -iE '^[[:space:]]*config TARGET_DEVICE_.*h3c_rc3000' "$SRC/tmp/.config-target.in" 2>/dev/null | head -1 | awk '{print $2}')
+# 确保 h3c_rc3000 设备被选中：直接从构建系统生成的 tmp/.config-target.in 读取真实符号名。
+# 符号格式：TARGET_DEVICE_<board>_<subtarget>_DEVICE_<profile>
+# 注意 tmp/.config-target.in 里每个设备有两条：
+#   config TARGET_DEVICE_<...>_DEVICE_<profile>          （选设备本身 —— 我们要这个）
+#   config TARGET_DEVICE_PACKAGES_<...>_DEVICE_<profile> （选默认包集 —— 不是设备选择符号，写了 Kconfig 报 unexpected data 被忽略）
+# 正则必须精确排除 PACKAGES 前缀，否则会误抓无效符号 → 设备不被选中 → 无镜像产出（前一轮就栽在这）。
+SYM=$(grep -iE '^[[:space:]]*config TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000$' "$SRC/tmp/.config-target.in" 2>/dev/null | head -1 | awk '{print $2}')
 if [ -n "$SYM" ]; then
-  echo ">>> 自动选中设备符号: $SYM"
+  echo ">>> 自动选中设备符号(真实): $SYM"
   sed -i "s/# $SYM is not set/$SYM=y/" .config
   grep -q "^$SYM=y\$" .config || echo "$SYM=y" >> .config
   make defconfig
 else
-  echo "警告: 未在 tmp/.config-target.in 找到 h3c_rc3000 设备符号，可能设备定义未注册（见 build/build.log）" >&2
+  echo "错误: 未在 tmp/.config-target.in 找到真正的设备选择符号 TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000（注意不是 PACKAGES 变体），设备定义可能未注册" >&2
+  exit 1
 fi
 
 # 注：独立 DTS 语法校验需内核 dtsi（编译期才就绪），此处跳过；
