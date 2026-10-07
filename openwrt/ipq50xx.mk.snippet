@@ -1,0 +1,26 @@
+# 追加到 target/linux/qualcommax/image/ipq50xx.mk
+# （build.sh 会自动把 define..endef 部分追加进去，这里也留一份方便手工操作）
+# IMAGE_SIZE 40960k: RC3000 的 rootfs 分区是 0x2800000 = 40MB，镜像不能超过它
+
+define Device/h3c_rc3000
+	$(call Device/FitImage)
+	$(call Device/UbiFit)
+	DEVICE_VENDOR := H3C
+	DEVICE_MODEL := Magic RC3000
+	DEVICE_DTS_CONFIG := config@mp03.1
+	SOC := ipq5018
+	BLOCKSIZE := 128k
+	PAGESIZE := 2048
+	IMAGE_SIZE := 40960k
+	NAND_SIZE := 128m
+	DEVICE_PACKAGES := ath11k-firmware-ipq5018-qcn6122 \
+	ipq-wifi-h3c_rc3000
+endef
+TARGET_DEVICES += h3c_rc3000
+
+# package/firmware/ipq-wifi/Makefile 的 ALLWIFIBOARDS 里追加:
+#     h3c_rc3000 \
+
+# 无线校准数据:
+#     把路由器上备份出的 ART(0:art) 用 tools/art2board.py 处理，
+#     产出 board-h3c_rc3000.bin 放进 package/firmware/ipq-wifi/ 下。

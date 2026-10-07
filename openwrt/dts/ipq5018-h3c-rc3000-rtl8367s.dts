@@ -1,0 +1,374 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+//
+// H3C Magic RC3000 —— 交换机变体: RTL8367S
+//
+// 只在交换机部分与 ipq5018-h3c-rc3000.dts 不同。
+// 判定方法: 在路由器上执行  swconfig list  或  dmesg | grep -iE 'rtl8365mb|qca8k'
+//   出现 rtl8367 / rtl8365 -> 用本文件
+//   出现 qca8337 / qca8k   -> 用 ipq5018-h3c-rc3000.dts
+// collect.sh 会自动判别，hwinfo2dts.py 会自动选。
+
+/dts-v1/;
+
+#include "ipq5018.dtsi"
+#include "ipq5018-ess.dtsi"
+#include "ipq5018-qcn6122.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "H3C Magic RC3000";
+	compatible = "h3c,rc3000", "qcom,ipq5018";
+
+	aliases {
+		label-mac-device = <&gmac1>;
+
+		led-boot = &led_status;
+		led-failsafe = &led_status;
+		led-running = &led_status;
+		led-upgrade = &led_status;
+
+		serial0 = &blsp1_uart1;
+	};
+
+	chosen {
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+		stdout-path = "serial0:115200n8";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&button_pins>;
+		pinctrl-names = "default";
+
+		// [VERIFY] GPIO 编号需实测
+		button-reset {
+			label = "reset";
+			gpios = <&tlmm 27 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+
+		button-wps {
+			label = "wps";
+			gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&led_pins>;
+		pinctrl-names = "default";
+
+		// [VERIFY] GPIO 编号需实测
+		led_status: led-0 {
+			gpios = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_STATUS;
+		};
+	};
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
+&xo_board_clk {
+	clock-div = <4>;
+	clock-mult = <1>;
+};
+
+&blsp1_uart1 {
+	status = "okay";
+
+	pinctrl-0 = <&serial_0_pins>;
+	pinctrl-names = "default";
+};
+
+&prng {
+	status = "okay";
+};
+
+&qfprom {
+	status = "okay";
+};
+
+&qpic_bam {
+	status = "okay";
+};
+
+&qpic_nand {
+	pinctrl-0 = <&qpic_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+
+		nand-ecc-engine = <&qpic_nand>;
+		nand-ecc-step-size = <512>;
+		nand-ecc-strength = <8>;
+		nand-bus-width = <8>;
+
+		partitions {
+			compatible = "qcom,smem-part";
+
+			partition-art {
+				label = "0:art";
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_art_0: mac-address@0 {
+						compatible = "mac-base";
+						reg = <0x0 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_6: mac-address@6 {
+						compatible = "mac-base";
+						reg = <0x6 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_c: mac-address@c {
+						compatible = "mac-base";
+						reg = <0xc 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_12: mac-address@12 {
+						compatible = "mac-base";
+						reg = <0x12 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+		};
+	};
+};
+
+/*
+ * ===========================================================================
+ *  Ethernet:
+ *    IPQ5018 gmac1 -> uniphy0 PCS -> HSGMII -> RTL8367S DSA switch
+ *    面板 4 个口全部是 RTL8367S 内置 PHY
+ *
+ *    注意: mdio0 必须保持使能。注册 ge_phy 会去复位 GCC_GEPHY_MISC_ARES，
+ *    该复位同时门控 mdio1 共享的 MDC/MDIO 通路；关掉 mdio0 会导致
+ *    RTL8367S 在 mdio1 上完全不响应（寄存器读回 0xffff）。
+ *
+ *    RTL8367S: mdio1 地址 29(0x1d)，reset GPIO 33（[VERIFY] 待实测）。
+ * ===========================================================================
+ */
+
+&mdio0 {
+	status = "okay";
+};
+
+&uniphy0 {
+	status = "okay";
+
+	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
+	assigned-clock-rates = <UNIPHY_REFCLK_50MHZ>;
+};
+
+&gmac1 {
+	status = "okay";
+
+	phy-mode = "2500base-x";
+
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&macaddr_art_6 (0)>;
+
+	fixed-link {
+		speed = <2500>;
+		full-duplex;
+	};
+};
+
+&mdio1 {
+	status = "okay";
+
+	pinctrl-0 = <&mdio1_pins>;
+	pinctrl-names = "default";
+
+	// [VERIFY] reset GPIO 33 取自同平台参照板，需实测
+	switch@1d {
+		compatible = "realtek,rtl8365mb";
+		reg = <0x1d>;
+		reset-gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+
+		mdio {
+			compatible = "realtek,smi-mdio";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			switchphy0: ethernet-phy@0 {
+				reg = <0>;
+			};
+
+			switchphy1: ethernet-phy@1 {
+				reg = <1>;
+			};
+
+			switchphy2: ethernet-phy@2 {
+				reg = <2>;
+			};
+
+			switchphy3: ethernet-phy@3 {
+				reg = <3>;
+			};
+
+			switchphy4: ethernet-phy@4 {
+				reg = <4>;
+			};
+		};
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@0 {
+				reg = <0>;
+				label = "wan";
+				phy-handle = <&switchphy0>;
+
+				nvmem-cells = <&macaddr_art_0 (0)>;
+				nvmem-cell-names = "mac-address";
+			};
+
+			port@1 {
+				reg = <1>;
+				label = "lan1";
+				phy-handle = <&switchphy1>;
+			};
+
+			port@2 {
+				reg = <2>;
+				label = "lan2";
+				phy-handle = <&switchphy2>;
+			};
+
+			port@3 {
+				reg = <3>;
+				label = "lan3";
+				phy-handle = <&switchphy3>;
+			};
+
+			port@6 {
+				reg = <6>;
+				ethernet = <&gmac1>;
+				phy-mode = "2500base-x";
+
+				fixed-link {
+					speed = <2500>;
+					full-duplex;
+				};
+			};
+		};
+	};
+};
+
+&tlmm {
+	button_pins: button-state {
+		button-pins {
+			pins = "gpio27", "gpio38";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	led_pins: led-state {
+		pins = "gpio30";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+
+	mdio1_pins: mdio-state {
+		mdc-pins {
+			pins = "gpio36";
+			function = "mdc";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio37";
+			function = "mdio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	qpic_pins: qpic-state {
+		clock-pins {
+			pins = "gpio9";
+			function = "qspi_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		cs-pins {
+			pins = "gpio8";
+			function = "qspi_cs";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data-pins {
+			pins = "gpio4", "gpio5", "gpio6", "gpio7";
+			function = "qspi_data";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	serial_0_pins: uart0-state {
+		pins = "gpio28", "gpio29";
+		function = "blsp0_uart1";
+		drive-strength = <8>;
+		bias-disable;
+	};
+};
+
+&q6v5_wcss {
+	status = "okay";
+
+	boot-args = <
+		/*       type:	*/	0x1	/* PCIE0	*/
+		/*     length:	*/	4
+		/*     UPD ID:	*/	2
+		/* reset GPIO:	*/	15
+		/*   reserved:	*/	0 0>;
+};
+
+&wifi {
+	// IPQ5018 集成 2.4G
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd1>;
+	qcom,ath11k-calibration-variant = "H3C-RC3000";
+	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,bdf-addr = <0x4c400000>;
+};
+
+&wifi1 {
+	// QCN6102 5G
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd2>;
+	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,ath11k-calibration-variant = "H3C-RC3000";
+	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,bdf-addr = <0x4d100000>;
+	qcom,m3-dump-addr = <0x4df00000>;
+};

@@ -1,0 +1,43 @@
+CONFIG_TARGET_qualcommax=y
+CONFIG_TARGET_qualcommax_ipq50xx=y
+# 注意：OpenWrt Kconfig 把设备名大写化，必须是 H3C_RC3000（不是 h3c_rc3000）
+CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_H3C_RC3000=y
+CONFIG_TARGET_ROOTFS_INITRAMFS=y
+CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_UBIFS=y
+
+CONFIG_DEVEL=y
+CONFIG_BUILD_LOG=y
+CONFIG_CCACHE=y
+
+# 无线（IPQ5018 集成 2.4G 用 kmod-ath11k；QCN6102 5G PCIe 用 kmod-ath11k-pci）
+CONFIG_PACKAGE_kmod-ath11k=y
+CONFIG_PACKAGE_kmod-ath11k-pci=y
+CONFIG_PACKAGE_ath11k-firmware-ipq5018-qcn6122=y
+CONFIG_PACKAGE_ipq-wifi-h3c_rc3000=y
+
+# NSS 硬件加速（ImmortalWrt 相对主线 OpenWrt 的优势；
+# 若首次编译报包不存在，直接删掉这两行即可，不影响基础启动）
+CONFIG_PACKAGE_kmod-qca-nss-dp=y
+CONFIG_PACKAGE_kmod-qca-nss-ecm=y
+
+# 交换机（外部 QCA8337，DSA 模型）
+CONFIG_PACKAGE_kmod-dsa-qca8k=y
+
+# LuCI 中文
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-ssl=y
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+
+# NAND 工具（备份/救砖必备）
+CONFIG_PACKAGE_ubi-utils=y
+CONFIG_PACKAGE_mtd-utils=y
+CONFIG_PACKAGE_kmod-mtd-rw=y
+
+# 常用
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_openssh-sftp-server=y
+CONFIG_PACKAGE_tcpdump-mini=y
+CONFIG_PACKAGE_htop=y

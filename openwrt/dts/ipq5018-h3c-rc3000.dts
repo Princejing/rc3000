@@ -1,0 +1,410 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+//
+// H3C Magic RC3000 (中国电信定制版) —— 交换机变体: QCA8337
+//
+// 硬件: IPQ5018 / IPQ5000 双核 A53 @1.0GHz, 256MB DDR3, 128MB SPI-NAND
+//       2.4G 集成于 SoC, 5G 为 PCIe 上的 QCN6102 (= qcn6122 兼容)
+//       4 个千兆口经外挂 QCA8337
+//
+// 参照上游 CMCC MR3000D-CI (同为 IPQ5018 + QCN6102 + QCA8337 + SPI-NAND)。
+// 由 tools/hwinfo2dts.py 依据本机 hwinfo.json 生成。
+//
+// ⚠ 三项必须实测确认, 见文件内 [VERIFY] 标记:
+//    1. 按键 / LED 的 GPIO 编号
+//    2. 交换机型号 (本文件是 QCA8337; 若你的板子是 RTL8367S 请用
+//       ipq5018-h3c-rc3000-rtl8367s.dts)
+//    3. qcom,bdf-addr 无线校准数据地址
+
+/dts-v1/;
+
+#include "ipq5018.dtsi"
+#include "ipq5018-ess.dtsi"
+#include "ipq5018-qcn6122.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "H3C Magic RC3000";
+	compatible = "h3c,rc3000", "qcom,ipq5018";
+
+	aliases {
+		label-mac-device = <&gmac1>;
+
+		led-boot = &led_status;
+		led-failsafe = &led_status;
+		led-running = &led_status;
+		led-upgrade = &led_status;
+
+		serial0 = &blsp1_uart1;
+	};
+
+	chosen {
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+		stdout-path = "serial0:115200n8";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&button_pins>;
+		pinctrl-names = "default";
+
+		// [VERIFY] RC3000 面板有 Reset 键 + 功能键(mesh/无线优化)。
+		// 这里的 GPIO 取自同平台参照板，必须对照原厂固件实测:
+		//   cat /sys/kernel/debug/gpio   或   dmesg | grep -i gpio
+		// 若按键不生效，不影响启动，只影响按键功能。
+		button-reset {
+			label = "reset";
+			gpios = <&tlmm 27 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+
+		button-wps {
+			label = "wps";
+			gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-0 = <&led_pins>;
+		pinctrl-names = "default";
+
+		// [VERIFY] RC3000 只有 1 个正面系统状态 LED，GPIO 待实测。
+		led_status: led-0 {
+			gpios = <&tlmm 30 GPIO_ACTIVE_HIGH>;
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_STATUS;
+		};
+	};
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
+&xo_board_clk {
+	clock-div = <4>;
+	clock-mult = <1>;
+};
+
+&blsp1_uart1 {
+	status = "okay";
+
+	pinctrl-0 = <&serial_0_pins>;
+	pinctrl-names = "default";
+};
+
+&prng {
+	status = "okay";
+};
+
+&qfprom {
+	status = "okay";
+};
+
+&qpic_bam {
+	status = "okay";
+};
+
+&qpic_nand {
+	pinctrl-0 = <&qpic_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+
+		nand-ecc-engine = <&qpic_nand>;
+		nand-ecc-step-size = <512>;
+		nand-ecc-strength = <8>;
+		nand-bus-width = <8>;
+
+		// RC3000 的分区表由 bootloader 写入 SMEM，内核直接读 SMEM，
+		// 因此这里不需要手写 offset。若你的板子 smem 表不可用，
+		// 改用 fixed-partitions 并把 collect.sh 采集到的 /proc/mtd 抄进来。
+		partitions {
+			compatible = "qcom,smem-part";
+
+			partition-art {
+				label = "0:art";
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					// WAN MAC
+					macaddr_art_0: mac-address@0 {
+						compatible = "mac-base";
+						reg = <0x0 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					// LAN MAC
+					macaddr_art_6: mac-address@6 {
+						compatible = "mac-base";
+						reg = <0x6 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					// WLAN 2.4 GHz MAC
+					macaddr_art_c: mac-address@c {
+						compatible = "mac-base";
+						reg = <0xc 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					// WLAN 5 GHz MAC
+					macaddr_art_12: mac-address@12 {
+						compatible = "mac-base";
+						reg = <0x12 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+		};
+	};
+};
+
+/*
+ * ===============================================================
+ *     _______________________         _______________________
+ *    |        IPQ5018        |       |        QCA8337        |
+ *    | +------+   +--------+ |       | +--------+   +------+ |
+ *    | | MAC0 |---| GE Phy | |       | |  Phy0  |---| MAC1 | |
+ *    | +------+   +--------+ |       | +--------+   +------+ |
+ *    | +------+   +--------+ |       | +--------+   +------+ |
+ *    | | MAC1 |---| Uniphy |-+-SGMII-+-| SerDes |---| MAC6 | |
+ *    | +------+   +--------+ |       | +--------+   +------+ |
+ *    |_______________________|       |_______________________|
+ * ===============================================================
+ */
+
+&uniphy0 {
+	status = "okay";
+
+	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
+	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
+};
+
+// MAC0 -> 内部 GE Phy
+&gmac0 {
+	status = "okay";
+
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&macaddr_art_0 (0)>;
+};
+
+// MAC1 -> SGMII -> QCA8337
+&gmac1 {
+	status = "okay";
+
+	phy-mode = "sgmii";
+
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&macaddr_art_6 (0)>;
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+&mdio0 {
+	status = "okay";
+};
+
+&ge_phy {
+	qcom,dac-preset-short-cable;
+};
+
+&mdio1 {
+	status = "okay";
+
+	pinctrl-0 = <&mdio1_pins>;
+	pinctrl-names = "default";
+	reset-gpios = <&tlmm 39 GPIO_ACTIVE_LOW>;
+
+	qca8337_0: ethernet-phy@0 {
+		reg = <0>;
+	};
+
+	qca8337_1: ethernet-phy@1 {
+		reg = <1>;
+	};
+
+	qca8337_2: ethernet-phy@2 {
+		reg = <2>;
+	};
+
+	qca8337_3: ethernet-phy@3 {
+		reg = <3>;
+	};
+
+	qca8337_4: ethernet-phy@4 {
+		reg = <4>;
+	};
+
+	switch1: ethernet-switch@17 {
+		compatible = "qca,qca8337";
+		reg = <17>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ethernet-ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ethernet-port@1 {
+				reg = <1>;
+				label = "lan3";
+				phy-handle = <&qca8337_0>;
+			};
+
+			ethernet-port@2 {
+				reg = <2>;
+				label = "lan2";
+				phy-handle = <&qca8337_1>;
+			};
+
+			ethernet-port@3 {
+				reg = <3>;
+				label = "lan1";
+				phy-handle = <&qca8337_2>;
+			};
+
+			ethernet-port@4 {
+				reg = <4>;
+				label = "wan";
+				phy-handle = <&qca8337_3>;
+
+				nvmem-cells = <&macaddr_art_0 (0)>;
+				nvmem-cell-names = "mac-address";
+			};
+
+			ethernet-port@6 {
+				reg = <6>;
+				phy-mode = "sgmii";
+				ethernet = <&gmac1>;
+				qca,sgmii-enable-pll;
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+			};
+		};
+	};
+};
+
+&tlmm {
+	button_pins: button-state {
+		button-pins {
+			pins = "gpio27", "gpio38";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	led_pins: led-state {
+		pins = "gpio30";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+
+	mdio1_pins: mdio-state {
+		mdc-pins {
+			pins = "gpio36";
+			function = "mdc";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio37";
+			function = "mdio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	qpic_pins: qpic-state {
+		clock-pins {
+			pins = "gpio9";
+			function = "qspi_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		cs-pins {
+			pins = "gpio8";
+			function = "qspi_cs";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data-pins {
+			pins = "gpio4", "gpio5", "gpio6", "gpio7";
+			function = "qspi_data";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	serial_0_pins: uart0-state {
+		pins = "gpio28", "gpio29";
+		function = "blsp0_uart1";
+		drive-strength = <8>;
+		bias-disable;
+	};
+
+	switch_reset_pins: switch-reset-state {
+		pins = "gpio39";
+		function = "gpio";
+		drive-strength = <8>;
+		bias-pull-down;
+	};
+};
+
+&q6v5_wcss {
+	status = "okay";
+
+	/* QCN6102 挂在 UPD ID 2。不指定 boot-args 时固件默认找 UPD ID 3 */
+	boot-args = <
+		/*       type:	*/	0x1	/* PCIE0	*/
+		/*     length:	*/	4
+		/*     UPD ID:	*/	2
+		/* reset GPIO:	*/	15
+		/*   reserved:	*/	0 0>;
+};
+
+&wifi {
+	// IPQ5018 集成 2.4G
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd1>;
+	qcom,ath11k-calibration-variant = "H3C-RC3000";
+	qcom,ath11k-fw-memory-mode = <1>;
+	// [VERIFY] 校准数据在预留内存的偏移，先用同平台值；
+	// 若 2.4G 起不来，在原厂固件的 dmesg 里搜 bdf / ath11k 确认。
+	qcom,bdf-addr = <0x4c400000>;
+};
+
+&wifi1 {
+	// QCN6102 5G
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd2>;
+	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,ath11k-calibration-variant = "H3C-RC3000";
+	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,bdf-addr = <0x4d100000>;
+	qcom,m3-dump-addr = <0x4df00000>;
+};

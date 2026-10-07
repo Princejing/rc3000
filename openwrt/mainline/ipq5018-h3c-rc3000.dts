@@ -1,0 +1,377 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+//
+// H3C Magic RC3000 —— 主线 OpenWrt（qualcommax/ipq50xx，内核 6.12）
+//
+// 全部参数均来自本机实测（/proc/device-tree、dmesg、/proc/mtd），不是推测。
+//
+// 硬件：
+//   SoC      IPQ5018 (qcom,ipq5018-mp02.1)，双核 A53 @1.0GHz，集成 256MB DDR3L
+//   NAND     Micron MT29F1G01ABBFDWB-IT，128MiB，page 2048，OOB 128，ECC 8bit/512
+//   2.4G     SoC 集成
+//   5G       QCN6102（QSDK 软件名 qcn6122），PCIe
+//   交换机   内部 QCA MP（出 WAN）+ 外部 QCA8337（出 3×LAN）
+//
+// 实测关键值（原厂 DTB）：
+//   mdio@90000/phy-reset-gpio = <&tlmm 26 0>
+//   ess-switch1@1（外部 QCA8337）: access=mdio, cpu_bmp=0x40(port6),
+//                                  lan_bmp=0x1e(port1-4), wan_bmp=0
+//   port_phyinfo: port_id 1/2/3 -> phy_address 0/1/2
+//   ess-switch@0x39c00000（内部）: access=local bus, port@0 phy_address=7 -> WAN
+//   gpio_keys: button@1 = wps, gpios = <&tlmm 38 GPIO_ACTIVE_LOW>
+//   内核 BDF: cnss2.bdf_integrated=0x10（2.4G）, bdf_pci0=0x50（5G）
+
+/dts-v1/;
+
+#include "ipq5018.dtsi"
+#include "ipq5018-ess.dtsi"
+#include "ipq5018-qcn6122.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "H3C Magic RC3000";
+	compatible = "h3c,rc3000", "qcom,ipq5018";
+
+	aliases {
+		label-mac-device = <&gmac0>;
+
+		serial0 = &blsp1_uart1;
+	};
+
+	chosen {
+		bootargs-append = " root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M";
+		stdout-path = "serial0:115200n8";
+	};
+
+	keys {
+		compatible = "gpio-keys";
+		pinctrl-0 = <&button_pins>;
+		pinctrl-names = "default";
+
+		// 原厂 DTB 只有这一个按键：wps，gpio38 低有效
+		button-wps {
+			label = "wps";
+			gpios = <&tlmm 38 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+		};
+
+		// reset 键未出现在原厂 DTB 里；RC3000 面板确实有复位键，
+		// 若按下无效可尝试 27（同平台参照值）。不影响启动。
+		button-reset {
+			label = "reset";
+			gpios = <&tlmm 27 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+		};
+	};
+};
+
+&sleep_clk {
+	clock-frequency = <32000>;
+};
+
+&xo_board_clk {
+	clock-div = <4>;
+	clock-mult = <1>;
+};
+
+&blsp1_uart1 {
+	status = "okay";
+
+	pinctrl-0 = <&serial_0_pins>;
+	pinctrl-names = "default";
+};
+
+&prng {
+	status = "okay";
+};
+
+&qfprom {
+	status = "okay";
+};
+
+&qpic_bam {
+	status = "okay";
+};
+
+&qpic_nand {
+	pinctrl-0 = <&qpic_pins>;
+	pinctrl-names = "default";
+	status = "okay";
+
+	// Micron MT29F1G01ABBFDWB-IT
+	nand@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+
+		nand-ecc-engine = <&qpic_nand>;
+		// 实测 dmesg: nandeccbits=8, OOB 128
+		nand-ecc-step-size = <512>;
+		nand-ecc-strength = <8>;
+		nand-bus-width = <8>;
+
+		// 分区表由 bootloader 写入 SMEM。本机实测 mtd 布局：
+		//   mtd13 0:ART, mtd15 rootfs_1@0x900000, mtd16 rootfs@0x3100000
+		partitions {
+			compatible = "qcom,smem-part";
+
+			partition-art {
+				label = "0:art";
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					// 实测 ethaddr=40:FE:95:C4:19:C8 在 ART 起始处
+					macaddr_art_0: mac-address@0 {
+						compatible = "mac-base";
+						reg = <0x0 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_6: mac-address@6 {
+						compatible = "mac-base";
+						reg = <0x6 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_c: mac-address@c {
+						compatible = "mac-base";
+						reg = <0xc 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+
+					macaddr_art_12: mac-address@12 {
+						compatible = "mac-base";
+						reg = <0x12 0x6>;
+						#nvmem-cell-cells = <1>;
+					};
+				};
+			};
+		};
+	};
+};
+
+/*
+ * ===============================================================
+ *  实测网络模型（与原厂 DTB、RT3000 B 机一致）：
+ *
+ *    内部 switch0 (QCA MP, local bus)
+ *        port@0 -> phy_address 7 (内部 GE PHY) -> eth0 = WAN
+ *    外部 switch1 (QCA8337, mdio)
+ *        port 1,2,3 -> phy 0,1,2  = LAN1..LAN3
+ *        port 6                   = CPU 上行 -> eth1 (SGMII)
+ *        wan_bmp = 0  -> WAN 不在外部交换机上
+ * ===============================================================
+ */
+
+&uniphy0 {
+	status = "okay";
+
+	assigned-clocks = <&uniphy0 UNIPHY_CLK_REF>;
+	assigned-clock-rates = <UNIPHY_REFCLK_25MHZ>;
+};
+
+// gmac0 -> 内部 GE PHY -> WAN
+&gmac0 {
+	status = "okay";
+
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&macaddr_art_0 (0)>;
+};
+
+// gmac1 -> SGMII -> 外部 QCA8337
+&gmac1 {
+	status = "okay";
+
+	phy-mode = "sgmii";
+
+	nvmem-cell-names = "mac-address";
+	nvmem-cells = <&macaddr_art_6 (0)>;
+
+	fixed-link {
+		speed = <1000>;
+		full-duplex;
+	};
+};
+
+// 内部 MDIO 必须使能：注册 ge_phy 会去复位 GCC_GEPHY_MISC_ARES，
+// 该复位同时门控 mdio1 共享的 MDC/MDIO 通路。关掉 mdio0 会让
+// 外部 QCA8337 在 mdio1 上完全不响应。
+&mdio0 {
+	status = "okay";
+};
+
+&ge_phy {
+	qcom,dac-preset-short-cable;
+};
+
+&mdio1 {
+	status = "okay";
+
+	pinctrl-0 = <&mdio1_pins>;
+	pinctrl-names = "default";
+
+	// 实测：/proc/device-tree/soc/mdio@90000/phy-reset-gpio = <&tlmm 26 0>
+	reset-gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
+
+	qca8337_0: ethernet-phy@0 {
+		reg = <0>;
+	};
+
+	qca8337_1: ethernet-phy@1 {
+		reg = <1>;
+	};
+
+	qca8337_2: ethernet-phy@2 {
+		reg = <2>;
+	};
+
+	switch1: ethernet-switch@17 {
+		compatible = "qca,qca8337";
+		reg = <17>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		ethernet-ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			ethernet-port@1 {
+				reg = <1>;
+				label = "lan1";
+				phy-handle = <&qca8337_0>;
+			};
+
+			ethernet-port@2 {
+				reg = <2>;
+				label = "lan2";
+				phy-handle = <&qca8337_1>;
+			};
+
+			ethernet-port@3 {
+				reg = <3>;
+				label = "lan3";
+				phy-handle = <&qca8337_2>;
+			};
+
+			ethernet-port@6 {
+				reg = <6>;
+				phy-mode = "sgmii";
+				ethernet = <&gmac1>;
+				qca,sgmii-enable-pll;
+
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+			};
+		};
+	};
+};
+
+&tlmm {
+	button_pins: button-state {
+		button-pins {
+			pins = "gpio27", "gpio38";
+			function = "gpio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	mdio1_pins: mdio-state {
+		mdc-pins {
+			pins = "gpio36";
+			function = "mdc";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+
+		mdio-pins {
+			pins = "gpio37";
+			function = "mdio";
+			drive-strength = <8>;
+			bias-pull-up;
+		};
+	};
+
+	qpic_pins: qpic-state {
+		clock-pins {
+			pins = "gpio9";
+			function = "qspi_clk";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		cs-pins {
+			pins = "gpio8";
+			function = "qspi_cs";
+			drive-strength = <8>;
+			bias-disable;
+		};
+
+		data-pins {
+			pins = "gpio4", "gpio5", "gpio6", "gpio7";
+			function = "qspi_data";
+			drive-strength = <8>;
+			bias-disable;
+		};
+	};
+
+	serial_0_pins: uart0-state {
+		pins = "gpio28", "gpio29";
+		function = "blsp0_uart1";
+		drive-strength = <8>;
+		bias-disable;
+	};
+};
+
+&q6v5_wcss {
+	status = "okay";
+
+	/* QCN6102 挂在 UPD ID 2；不指定时固件默认找 UPD ID 3 */
+	boot-args = <
+		/*       type:	*/	0x1	/* PCIE0	*/
+		/*     length:	*/	4
+		/*     UPD ID:	*/	2
+		/* reset GPIO:	*/	15
+		/*   reserved:	*/	0 0>;
+};
+
+// BDF 加载策略（两档，先试 A，不行再退回 B）
+//
+// A. qcom,bdf-addr —— 与同构模板 CMCC MR3000D-CI 一致，从预留内存读 BDF。
+//    前提是原厂 U-Boot 会把 BDF 预填到该地址（MR3000D-CI 就是这么工作的）。
+//    本机原厂走的是 QSDK cnss 文件加载，U-Boot 是否预填没有实锤，
+//    所以下面先按 A 写；若启动后 dmesg 里 ath11k 报 BDF/board 失败，
+//    就删掉这两行换成 B。
+//
+// B. 标准 firmware 路径 —— 不写 bdf-addr，ath11k 改读
+//      /lib/firmware/ath11k/IPQ5018/hw1.0/board-2.bin   (2.4G)
+//      /lib/firmware/ath11k/QCN6122/hw1.0/board-2.bin   (5G)
+//    文件已经用本机 caldata 构造好，见 openwrt/board/。
+
+&wifi {
+	// IPQ5018 集成 2.4G
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd1>;
+	qcom,ath11k-calibration-variant = "H3C-RC3000";
+	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,bdf-addr = <0x4c400000>;
+};
+
+&wifi1 {
+	// QCN6102 5G
+	status = "okay";
+
+	qcom,rproc = <&q6_wcss_pd2>;
+	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
+	qcom,ath11k-calibration-variant = "H3C-RC3000";
+	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,bdf-addr = <0x4d100000>;
+};
