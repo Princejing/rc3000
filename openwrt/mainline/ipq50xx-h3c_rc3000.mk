@@ -15,7 +15,10 @@ define Device/h3c_rc3000
 	DEVICE_VENDOR := H3C
 	DEVICE_MODEL := Magic RC3000
 	# DTS 文件: target/linux/qualcommax/files/arch/arm64/boot/dts/qcom/ipq5018-h3c-rc3000.dts
-	DEVICE_DTS := qcom/ipq5018-h3c-rc3000
+	# 注意: qualcommax 的 Device/Default 已设 DEVICE_DTS_DIR := $(DTS_DIR)/qcom，
+	# 框架会自动在文件名前加 qcom/ 子目录，所以这里【不能】再写 qcom/ 前缀，
+	# 否则解析成 dts/qcom/qcom/... 导致 "No such file or directory"。
+	DEVICE_DTS := ipq5018-h3c-rc3000
 	# 本机实测 MP 配置为 mp02.1（原厂 DTB compatible qcom,ipq5018-mp02.1）。
 	# 若编译报 "config@mp02.1 not found"，先试 config@mp03.3-m1，再整行删除。
 	DEVICE_DTS_CONFIG := config@mp02.1

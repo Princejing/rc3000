@@ -48,7 +48,9 @@ if [[ -z "$SRC" ]]; then
 fi
 
 # 25.12 起 qualcommax 的板级 DTS 在 files/arch/arm64/boot/dts/qcom/ 下，
-# 文件名约定 ipq5018-<device>.dts，框架按设备名推导 DEVICE_DTS = qcom/ipq5018-<device>
+# 文件名约定 ipq5018-<device>.dts。框架的 Device/Default 已设
+# DEVICE_DTS_DIR := $(DTS_DIR)/qcom（自动在文件名前加 qcom/ 子目录），
+# 所以设备定义里的 DEVICE_DTS 只需写 ipq5018-<device>（不含 qcom/ 前缀）。
 DTS_DIR="$SRC/target/linux/qualcommax/files/arch/arm64/boot/dts/qcom"
 MK="$SRC/target/linux/qualcommax/image/ipq50xx.mk"
 WIFI_MK="$SRC/package/firmware/ipq-wifi/Makefile"
