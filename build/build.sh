@@ -63,12 +63,27 @@ if ! grep -q "Device/h3c_rc3000" "$MK"; then
   cat "$ROOT/openwrt/mainline/ipq50xx-h3c_rc3000.mk" >> "$MK"
 fi
 
-echo ">>> 安装无线校准数据 (board-h3c_rc3000.*)"
-cp -f "$ROOT/openwrt/board/board-h3c_rc3000.ipq5018" "$SRC/package/firmware/ipq-wifi/" 2>/dev/null || true
-cp -f "$ROOT/openwrt/board/board-h3c_rc3000.qcn6122" "$SRC/package/firmware/ipq-wifi/" 2>/dev/null || true
+# 无线校准数据（board-2.bin 容器）。放进 ipq-wifi 包的 files/ 子目录，
+# 供下面的 generate-ipq-wifi-package 宏的 install-overlay 通过
+# wildcard $(PKG_BUILD_DIR)/board-h3c_rc3000.* 命中并装入镜像。
+# （仅作 best-effort：即使未命中，包也会空编译通过，不影响整体构建成败。）
+WIFI_DIR="$(dirname "$WIFI_MK")"
+mkdir -p "$WIFI_DIR/files"
+cp -f "$ROOT/openwrt/board/board-h3c_rc3000.ipq5018" "$WIFI_DIR/files/" 2>/dev/null || true
+cp -f "$ROOT/openwrt/board/board-h3c_rc3000.qcn6122" "$WIFI_DIR/files/" 2>/dev/null || true
+
+echo ">>> 注册 ipq-wifi board 包 (h3c_rc3000)"
+echo "    —— 必须同时做两步，否则 metadata 扫描报 'Package/ipq-wifi-h3c_rc3000 is missing the TITLE field'："
+echo "       1) 加入 ALLWIFIBOARDS 列表；2) 调用 generate-ipq-wifi-package 宏生成带 TITLE 的 Package 定义"
 if ! grep -q "h3c_rc3000" "$WIFI_MK"; then
-  # 在 ALLWIFIBOARDS 列表（以 cmcc_mr3000d-ci 行为锚点）追加 h3c_rc3000
-  sed -i 's/^\tcmcc_mr3000d-ci \\/\tcmcc_mr3000d-ci \\\n\th3c_rc3000 \\/' "$WIFI_MK"
+  # 步骤1：在 ALLWIFIBOARDS 列表（以 cmcc_mr3000d-ci 行为锚点）追加 h3c_rc3000。
+  # 不依赖前导 tab 匹配，避免 BSD/GNU sed 对 \t 解释不一致：仅匹配列表项独有的
+  # "cmcc_mr3000d-ci \"（注意行尾的空格+反斜杠），eval 调用行不含此后缀故不会误中。
+  sed -i 's/cmcc_mr3000d-ci \\/cmcc_mr3000d-ci \\\n\th3c_rc3000 \\/' "$WIFI_MK"
+fi
+if ! grep -q "generate-ipq-wifi-package,h3c_rc3000" "$WIFI_MK"; then
+  # 步骤2：在文件末尾的 foreach 展开行之前插入 generate-ipq-wifi-package 调用（提供 TITLE）
+  sed -i '/^\$(foreach PACKAGE,$(ALLWIFIPACKAGES)/i $(eval $(call generate-ipq-wifi-package,h3c_rc3000,H3C Magic RC3000))' "$WIFI_MK"
 fi
 
 echo ">>> 更新 feeds"
