@@ -83,6 +83,22 @@ make defconfig
 # 注：独立 DTS 语法校验需内核 dtsi（编译期才就绪），此处跳过；
 #     DTS 错误会在下面 make 阶段由内核 dtc 暴露，见 build/build.log。
 
+# 修复 GitHub runner 无法访问 immortalwrt 源站（403/404）的问题：
+# 改用 OpenWrt 官方源下载第三方 tarball（已验证 downloads.openwrt.org/sources 含所需文件）。
+export MIRROR="https://downloads.openwrt.org/sources"
+
+echo ">>> 预下载源码（独立阶段，失败可清晰定位；优先走 OpenWrt 官方源）"
+make download V=s 2>&1 | tail -20 || true
+
+# 关键 host 工具兜底：若某包仍不走 MIRROR，手动预置到 dl/ 让 download.pl 跳过网络
+DL="$SRC/dl"; mkdir -p "$DL"
+for f in lz4-1.10.0.tar.zst xxHash-0.8.3.tar.zst fakeroot_1.37.1.2.orig.tar.gz; do
+  if [ ! -f "$DL/$f" ]; then
+    curl -fsSL -o "$DL/$f" "https://downloads.openwrt.org/sources/$f" \
+      || echo "warn: 预下载 $f 失败，编译阶段将再尝试"
+  fi
+done
+
 echo ">>> 开始编译 (make -j$JOBS)"
 make -j"$JOBS" V=s 2>&1 | tee "$ROOT/build/build.log"
 

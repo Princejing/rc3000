@@ -41,3 +41,8 @@ CONFIG_PACKAGE_curl=y
 CONFIG_PACKAGE_openssh-sftp-server=y
 CONFIG_PACKAGE_tcpdump-mini=y
 CONFIG_PACKAGE_htop=y
+
+# 下载源：GitHub runner 访问 immortalwrt 源站（mirror/downloads.immortalwrt.org）返回 403/404，
+# 导致 host 工具源码（lz4/xxHash/fakeroot/libtool…）下载失败、编译早期即崩。
+# 改用 OpenWrt 官方源（已实测 downloads.openwrt.org/sources 含所需文件且对 runner 可达）。
+CONFIG_DOWNLOAD_MIRROR="https://downloads.openwrt.org/sources"
