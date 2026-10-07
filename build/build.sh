@@ -97,6 +97,18 @@ echo ">>> 应用配置"
 cp "$ROOT/build/config.seed" .config
 make defconfig
 
+# 确保 h3c_rc3000 设备被选中：直接从构建系统生成的 tmp/.config-target.in 读取真实符号名，
+# 避免硬编码前缀/大小写出错（符号格式 CONFIG_TARGET_DEVICE_<board>_<subtarget>_DEVICE_<PROFILE大写>）
+SYM=$(grep -iE '^[[:space:]]*config TARGET_DEVICE_.*h3c_rc3000' "$SRC/tmp/.config-target.in" 2>/dev/null | head -1 | awk '{print $2}')
+if [ -n "$SYM" ]; then
+  echo ">>> 自动选中设备符号: $SYM"
+  sed -i "s/# $SYM is not set/$SYM=y/" .config
+  grep -q "^$SYM=y\$" .config || echo "$SYM=y" >> .config
+  make defconfig
+else
+  echo "警告: 未在 tmp/.config-target.in 找到 h3c_rc3000 设备符号，可能设备定义未注册（见 build/build.log）" >&2
+fi
+
 # 注：独立 DTS 语法校验需内核 dtsi（编译期才就绪），此处跳过；
 #     DTS 错误会在下面 make 阶段由内核 dtc 暴露，见 build/build.log。
 
@@ -128,7 +140,13 @@ cp -f bin/targets/qualcommax/ipq50xx/*h3c_rc3000* "$OUT/" 2>/dev/null || true
 
 echo
 echo "=== 产物 ==="
-ls -lh "$OUT" 2>/dev/null || echo "(无产物，请查看 build/build.log)"
+ls -lh "$OUT"
+
+# 产物自检：若没生成 h3c_rc3000 的 initramfs，说明设备没被编出来，直接报错退出（不再静默"成功"）
+if [ -z "$(find "$OUT" -maxdepth 1 -iname '*h3c_rc3000*' -print -quit)" ]; then
+  echo "错误: output/ 中没有 h3c_rc3000 镜像，编译产物缺失，终止（请检查设备是否被选中、make 是否真的编了该设备）" >&2
+  exit 1
+fi
 
 if [[ $FULL -eq 0 ]]; then
   echo

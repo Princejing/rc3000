@@ -1,7 +1,10 @@
 CONFIG_TARGET_qualcommax=y
 CONFIG_TARGET_qualcommax_ipq50xx=y
-# 注意：OpenWrt Kconfig 把设备名大写化，必须是 H3C_RC3000（不是 h3c_rc3000）
-CONFIG_TARGET_qualcommax_ipq50xx_DEVICE_H3C_RC3000=y
+# 多设备 Profile 模式：只有显式选中的设备才会被编出镜像（否则只编 subtarget 默认参考机）
+CONFIG_TARGET_MULTI_PROFILE=y
+# OpenWrt Kconfig 设备选择符号格式：CONFIG_TARGET_DEVICE_<board>_<subtarget>_DEVICE_<PROFILE大写>
+# 正确前缀是 TARGET_DEVICE_（之前漏写 DEVICE_ 导致符号不生效，h3c_rc3000 没被编译，只出了默认机 cmcc_mr3000d-ci）
+CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_H3C_RC3000=y
 CONFIG_TARGET_ROOTFS_INITRAMFS=y
 CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
