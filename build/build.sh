@@ -98,11 +98,12 @@ cp "$ROOT/build/config.seed" .config
 make defconfig
 
 # 守卫式校验：确认 h3c_rc3000 已被选中。
-# 符号大小写规则由 OpenWrt 构建系统 uc() 决定：profile 名全大写、破折号转下划线，
-# 即 h3c_rc3000 -> H3C_RC3000（铁证：同仓库 cmcc_mr3000d-ci 用大写 DEVICE_CMCC_MR3000D_CI 成功选中）。
+# 符号规则（target-metadata.pl L313 铁证）：TARGET_DEVICE_$conf_$profile_id，id 原样小写，
+# 无 uc() 清洗 → 正确符号 CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000。
+# （大写 H3C_RC3000 已实测被 defconfig 丢弃；cmcc 总被编出是因为它是 ipq50xx 默认设备。）
 # 放在 if ! 条件里，grep 失败只会让 if 为假，不会因 set -e 神秘退出；
 # 若仍未选中则打印 .config 中真实存在的 TARGET_DEVICE 符号，供下一轮精准修正。
-if ! grep -qxF "CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_H3C_RC3000=y" .config; then
+if ! grep -qxF "CONFIG_TARGET_DEVICE_qualcommax_ipq50xx_DEVICE_h3c_rc3000=y" .config; then
   echo "错误: h3c_rc3000 未被选中。.config 中现有 TARGET_DEVICE 符号：" >&2
   grep -E '^CONFIG_TARGET_DEVICE_' .config >&2 || echo "(无任何 TARGET_DEVICE 符号)" >&2
   exit 1
