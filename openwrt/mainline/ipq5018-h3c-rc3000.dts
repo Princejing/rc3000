@@ -83,6 +83,15 @@
 	pinctrl-names = "default";
 };
 
+// Crypto 引擎（官方 MR3000D-CI 有我们没有的最后差异项之一，逐项对齐）
+&crypto {
+	status = "okay";
+};
+
+&cryptobam {
+	status = "okay";
+};
+
 &prng {
 	status = "okay";
 };
@@ -419,4 +428,5 @@
 	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
 	qcom,ath11k-calibration-variant = "H3C-RC3000";
 	qcom,ath11k-fw-memory-mode = <1>;
+	qcom,m3-dump-addr = <0x4df00000>;
 };
