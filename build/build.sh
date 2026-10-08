@@ -115,6 +115,40 @@ else
   echo ">>> 02_network 已含 h3c,rc3000 或文件缺失，跳过"
 fi
 
+# ---- 升级入口修复（platform.sh）——决定 sysupgrade 能否真正写入 ----
+# [实测铁证] h3c,rc3000 不在 qualcommax platform_do_upgrade 的 case 列表里，
+# 会落到 `*)` 的 default_do_upgrade → `mtd write - "${PART_NAME:-image}"`，
+# 而 PART_NAME=firmware；RC3000 的 SMEM 分区表里只有 rootfs/rootfs_1，
+# 没有 firmware 分区 → mtd write 失败 → sysupgrade 静默不写入、只重启，
+# 表现就是"刷了新镜像但内核/设备树纹丝不动"（曾据此误判 crypto 修复无效）。
+# 正确做法：为 h3c,rc3000 加 case 分支，指定 CI_UBIPART=rootfs 走 nand_do_upgrade。
+PLAT="$(find "$SRC/target/linux/qualcommax" -path '*lib/upgrade/platform.sh' 2>/dev/null | head -1)"
+if [[ -z "$PLAT" ]]; then
+  PLAT="$(find "$SRC/package/base-files" -path '*lib/upgrade/platform.sh' 2>/dev/null | head -1)"
+fi
+if [[ -n "$PLAT" ]]; then
+  if ! grep -q "h3c,rc3000" "$PLAT"; then
+    echo ">>> 注入 platform.sh case (h3c,rc3000 → nand_do_upgrade)"
+    # 在 platform_do_upgrade 的 `*)` 默认分支前插入（取最后一个顶层 `*)`）
+    PLINE="$(grep -n '^\s*\*)$' "$PLAT" | tail -1 | cut -d: -f1)"
+    if [[ -n "$PLINE" ]]; then
+      awk -v n="$PLINE" 'NR==n{print "h3c,rc3000)"; print "\t\tCI_UBIPART=\"rootfs\""; print "\t\tnand_do_upgrade \"$1\""; print "\t\t;;"} {print}' \
+        "$PLAT" > "$PLAT.tmp" && mv "$PLAT.tmp" "$PLAT" \
+        || echo "warn: platform.sh 注入失败（awk 异常），sysupgrade 将不写入"
+    else
+      echo "warn: platform.sh 未找到默认分支 \`*)\`，跳过注入"
+    fi
+  else
+    echo ">>> platform.sh 已含 h3c,rc3000，跳过"
+  fi
+  # 兜底：同步进根 files/ overlay，确保补丁后的脚本一定进 rootfs
+  mkdir -p "$SRC/files/lib/upgrade"
+  cp -f "$PLAT" "$SRC/files/lib/upgrade/platform.sh" \
+    || echo "warn: platform.sh overlay 拷贝失败"
+else
+  echo "warn: 未找到 lib/upgrade/platform.sh，sysupgrade 可能无法写入"
+fi
+
 UCI_DIR="$SRC/target/linux/qualcommax/base-files/etc/uci-defaults"
 mkdir -p "$UCI_DIR"
 cp -f "$ROOT/openwrt/base-files/uci-defaults/99-h3c-rc3000-network" "$UCI_DIR/" \
