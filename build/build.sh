@@ -65,10 +65,30 @@ if ! grep -q "Device/h3c_rc3000" "$MK"; then
   cat "$ROOT/openwrt/mainline/ipq50xx-h3c_rc3000.mk" >> "$MK"
 fi
 
-# 无线校准数据（board-2.bin 容器）。放进 ipq-wifi 包的 files/ 子目录，
-# 供下面的 generate-ipq-wifi-package 宏的 install-overlay 通过
-# wildcard $(PKG_BUILD_DIR)/board-h3c_rc3000.* 命中并装入镜像。
-# （仅作 best-effort：即使未命中，包也会空编译通过，不影响整体构建成败。）
+# ---- 无线校准数据（board-2.bin 容器）——双通道注入 ----
+#
+# 【教训】run13/14 实机验证：ipq-wifi 包链条（包目录 files/ → PKG_BUILD_DIR
+# → install-overlay 的 wildcard）在 CI 上静默失效，设备 /lib/firmware/ath11k/
+# 下根本没有 board-2.bin（ath11k fetch 失败 → 无线固件崩溃/QMI 超时）。
+#
+# 通道 1（决定性）：OpenWrt 官方根 overlay 机制——源码树根 files/ 目录的
+#   内容会被原样叠加进 rootfs（initramfs 与 squashfs 同样生效），不经过
+#   包管理器与构建目录，没有 wildcard/时序/覆盖等任何中间环节。
+FILES_OV="$SRC/files/lib/firmware/ath11k"
+mkdir -p "$FILES_OV/IPQ5018/hw1.0" "$FILES_OV/QCN6122/hw1.0"
+install -m 0644 "$ROOT/openwrt/board/board-h3c_rc3000.ipq5018" "$FILES_OV/IPQ5018/hw1.0/board-2.bin"
+install -m 0644 "$ROOT/openwrt/board/board-h3c_rc3000.qcn6122" "$FILES_OV/QCN6122/hw1.0/board-2.bin"
+# 确定性自检：两个 board-2.bin 必须就位且为 131183 字节，否则立即失败（不再静默"成功"）
+for _bf in "$FILES_OV/IPQ5018/hw1.0/board-2.bin" "$FILES_OV/QCN6122/hw1.0/board-2.bin"; do
+  if [[ ! -s "$_bf" ]] || [[ "$(wc -c < "$_bf")" != "131183" ]]; then
+    echo "错误: board-2.bin 注入失败 ($_bf)" >&2
+    exit 1
+  fi
+done
+echo ">>> files/ overlay 注入完成（IPQ5018/hw1.0 + QCN6122/hw1.0 各一个 board-2.bin，131183B）"
+
+# 通道 2（双保险保留）：ipq-wifi 包 files/ 目录。若包机制恢复正常，
+# 安装的内容与通道 1 相同，覆盖无害。
 WIFI_DIR="$(dirname "$WIFI_MK")"
 mkdir -p "$WIFI_DIR/files"
 cp -f "$ROOT/openwrt/board/board-h3c_rc3000.ipq5018" "$WIFI_DIR/files/" 2>/dev/null || true
