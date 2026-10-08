@@ -19,7 +19,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 安装依赖
         run: |
@@ -30,7 +30,7 @@ jobs:
             swig unzip zlib1g-dev file wget device-tree-compiler ccache
 
       - name: 缓存编译中间产物
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/openwrt-src
           key: openwrt-${{ github.event.inputs.branch }}-${{ github.sha }}
@@ -46,7 +46,7 @@ jobs:
           fi
 
       - name: 上传产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: rc3000-openwrt
           path: output/*
