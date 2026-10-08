@@ -60,6 +60,14 @@ WIFI_MK="$SRC/package/firmware/ipq-wifi/Makefile"
 echo ">>> 安装 DTS (ipq5018-h3c-rc3000.dts)"
 cp "$ROOT/openwrt/mainline/ipq5018-h3c-rc3000.dts" "$DTS_DIR/"
 
+# 【强制 DTB 重编】CI 用 actions/cache 缓存整个源码树（含构建产物），
+# 实测 run16 出现：DTS 已是新的（fw-memory-mode=<2>），但编出的 DTB 仍是旧值
+# （设备树读回 00 00 00 01）——陈旧 .dtb 未被重新生成。
+# 仅靠 cp 更新 DTS 的 mtime 并不可靠，这里显式删除所有同名 .dtb 并 touch DTS。
+find "$SRC" -name 'ipq5018-h3c-rc3000.dtb' -delete 2>/dev/null || true
+touch "$DTS_DIR/ipq5018-h3c-rc3000.dts"
+echo ">>> 已清除陈旧 DTB 产物，强制重新生成"
+
 echo ">>> 注册设备定义 (h3c_rc3000)"
 if ! grep -q "Device/h3c_rc3000" "$MK"; then
   cat "$ROOT/openwrt/mainline/ipq50xx-h3c_rc3000.mk" >> "$MK"
