@@ -1,94 +1,111 @@
 #!/usr/bin/env python3
 """用本机提取的 BDF 构造主线 ath11k 需要的 board-2.bin 容器。
 
-背景
-----
-主线 OpenWrt 的 ath11k 从 /lib/firmware/ath11k/<SoC>/hw1.0/board-2.bin 读取板级数据，
-格式是「容器」：84 字节头（含 board 名）+ 128 KiB body。
+容器格式（2026-10-08 按官方 openwrt/firmware_qca-wireless 的
+board-cmcc_mr3000d-ci.{ipq5018,qcn6122} 逐字节复刻，总长 131188）：
 
-原厂的 BDF 是**裸 body**（bdwlan.bXX，131072 字节），运行时由 cnss 驱动加载；
-主线 ath11k 不吃裸 body，必须包一层容器。
+    0x00  "QCA-ATH11K-BOARD\0"                       17B
+    0x11  "mmm"                                       3B
+    0x14  00 00 00 00                                  4B
+    0x18  u32 0x00020058                               4B
+    0x1C  u32 0                                        4B
+    0x20  u32 38（name 长度）                           4B
+    0x24  "bus=ahb,qmi-chip-id=0,qmi-board-id=255"    38B
+    0x4A  "mm\0\0\0\0"                                 6B
+    0x50  u32 23（variant 长度）                        4B
+    0x54  "variant=<VARIANT>"                         23B
+    0x6B  "m"                                          1B
+    0x6C  IE: u32 id=1, u32 len=0x20000                8B
+    0x74  body 0x20000                              128KiB
 
-容器头格式（由参考项目 H3C-RT3000-Product-R1 的成品文件逐字节核对）:
-
-    0x00  "QCA-ATH11K-BOARD\0"        17 字节
-    0x11  "mmm\0"                      4 字节（未知用途，沿用）
-    0x15  \x00\x00\x00                 3 字节
-    0x18  u32  0x00020038              沿用参考值
-    0x1c  u32  0
-    0x20  u32  38                      board 名字串长度（固定 38）
-    0x24  board 名 38 字节             bus=ahb,qmi-chip-id=0,qmi-board-id=<N>
-    0x4a  "mm"                         2 字节填充，使 IE 对齐到 0x4c
-    0x4c  IE 标记 struct("<II",1,0x20000)
-    0x54  body 131072 字节
-    总计  131156 字节
-
-board-id 来自内核命令行 cnss2.bdf_* 参数：
-    bdf_pci0=0x50      -> 5G(QCN6102/6122) 用 bdwlan.b50 -> board-id = 80
-    bdf_integrated=0x10 -> 2.4G(IPQ5018)   用 bdwlan.b10 -> board-id = 16
+关键修复（相对旧版）：
+  1. board 名含 qmi-board-id=255（ath11k QMI 上报的默认值），旧版用 16/80 不匹配；
+  2. 增加 "variant=<VARIANT>" 段（DT 里 qcom,ath11k-calibration-variant）；
+  3. 头部总长精确 0x74，body 从偶数偏移开始。
 
 用法
 ----
-    mkboard2.py --body bdf/caldata_1.bin   --board-id 80 --out board-h3c_rc3000.qcn6122
-    mkboard2.py --body bdf/caldata_2g.bin  --board-id 16 --out board-h3c_rc3000.ipq5018
+    mkboard2.py --body bdf/caldata_2g.bin --out openwrt/board/board-h3c_rc3000.ipq5018
+    mkboard2.py --body bdf/caldata_1.bin --out openwrt/board/board-h3c_rc3000.qcn6122
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import struct
 import sys
 from functools import reduce
 from pathlib import Path
 
-MAGIC = b"QCA-ATH11K-BOARD\0"
-NAME_FIELD_LEN = 38
+MAGIC = b"QCA-ATH11K-BOARD\0"                            # 17B
+BOARD_NAME = b"bus=ahb,qmi-chip-id=0,qmi-board-id=255"   # 38B
 BODY_SIZE = 0x20000
-HEADER_SIZE = 84
-CONTAINER_SIZE = HEADER_SIZE + BODY_SIZE      # 131156
+BDF_CHECKSUM_OFFSET = 0x0A
 BDF_CHECKSUM_GOAL = 0xFFFF
-
-# 本机的 board-id（来自 cnss2.bdf_*）
-DEFAULT_IDS = {"5g": 80, "2g": 16}
+HEADER_SIZE = 0x74                                       # 116
 
 
 def bdf_xor(body: bytes) -> int:
-    if len(body) % 2:
-        raise ValueError("body 长度必须是偶数")
-    return reduce(int.__xor__, struct.unpack(f"<{len(body)//2}H", body), 0)
+    n = len(body) // 2 * 2
+    return reduce(int.__xor__, struct.unpack(f"<{n//2}H", body[:n]), 0)
 
 
-def build(body: bytes, board_id: int) -> bytes:
+def fix_checksum(body: bytearray) -> bytearray:
+    """调整 body 偏移 0x0A 的 LE u16，使整块按 u16 XOR 结果 = 0xFFFF。"""
+    delta = bdf_xor(body) ^ BDF_CHECKSUM_GOAL
+    old = struct.unpack("<H", body[BDF_CHECKSUM_OFFSET:BDF_CHECKSUM_OFFSET + 2])[0]
+    body[BDF_CHECKSUM_OFFSET:BDF_CHECKSUM_OFFSET + 2] = struct.pack("<H", old ^ delta)
+    return body
+
+
+def build(body: bytes, variant: str) -> bytes:
     if len(body) != BODY_SIZE:
         raise ValueError(f"body 必须是 {BODY_SIZE} 字节，实际 {len(body)}")
-    name = f"bus=ahb,qmi-chip-id=0,qmi-board-id={board_id}".encode()
-    if len(name) > NAME_FIELD_LEN:
-        raise ValueError(f"board 名超长: {len(name)} > {NAME_FIELD_LEN}")
 
-    hdr = bytearray(HEADER_SIZE)
-    hdr[0x00:0x11] = MAGIC
-    hdr[0x11:0x15] = b"mmm\0"
-    hdr[0x18:0x1C] = struct.pack("<I", 0x00020038)
-    hdr[0x1C:0x20] = struct.pack("<I", 0)
-    hdr[0x20:0x24] = struct.pack("<I", NAME_FIELD_LEN)
-    hdr[0x24:0x24 + NAME_FIELD_LEN] = name.ljust(NAME_FIELD_LEN, b"\0")
-    hdr[0x4A:0x4C] = b"mm"
-    hdr[0x4C:0x54] = struct.pack("<II", 1, BODY_SIZE)
-    return bytes(hdr) + body
+    var = f"variant={variant}".encode()
+    out = bytearray()
+    out += MAGIC                                # 0x00-0x10（17B）
+    out += b"mmm"                               # 0x11-0x13（3B）
+    out += b"\0\0\0\0"                          # 0x14-0x17（4B）
+    out += struct.pack("<I", 0x00020058)        # 0x18-0x1B
+    out += struct.pack("<I", 0)                 # 0x1C-0x1F
+    out += struct.pack("<I", len(BOARD_NAME))   # 0x20-0x23 = 38
+    out += BOARD_NAME                           # 0x24-0x49
+    out += b"mm\0\0\0\0"                        # 0x4A-0x4F（6B）
+    out += struct.pack("<I", len(var))          # 0x50-0x53 = 23
+    out += var                                  # 0x54-0x6A
+    out += b"m"                                 # 0x6B（1B）
+    out += struct.pack("<II", 1, BODY_SIZE)     # 0x6C-0x73 IE(id=1, len)
+    out += body                                 # 0x74 + 0x20000
+    return bytes(out)
 
 
-def verify(data: bytes, board_id: int) -> list[str]:
-    errs = []
-    if len(data) != CONTAINER_SIZE:
-        errs.append(f"总长 {len(data)} != {CONTAINER_SIZE}")
+def verify(data: bytes, variant: str) -> list[str]:
+    errs: list[str] = []
+    var = f"variant={variant}".encode()
+    # 动态布局：0x50 len字段(4) + var + "m"(1) → IE(8) → body
+    ie_off = 0x50 + 4 + len(var) + 1
+    total = ie_off + 8 + BODY_SIZE
+    if len(data) != total:
+        errs.append(f"总长 {len(data)} != {total}")
     if not data.startswith(MAGIC):
         errs.append("magic 不对")
-    if data.find(struct.pack("<II", 1, BODY_SIZE), 20, 512) != 0x4C:
-        errs.append("IE 标记不在 0x4c")
-    want = f"qmi-board-id={board_id}".encode()
-    if want not in data[:HEADER_SIZE]:
-        errs.append(f"header 里找不到 {want.decode()}")
-    body = data[HEADER_SIZE:]
+    if data[0x11:0x14] != b"mmm":
+        errs.append("0x11 处不是 'mmm'")
+    if struct.unpack("<I", data[0x18:0x1C])[0] != 0x00020058:
+        errs.append("0x18 长度标记不是 0x00020058")
+    if struct.unpack("<I", data[0x20:0x24])[0] != len(BOARD_NAME):
+        errs.append("name_len 字段不是 38")
+    if data[0x24:0x24 + len(BOARD_NAME)] != BOARD_NAME:
+        errs.append("board 名不是 bus=ahb,...board-id=255")
+    if struct.unpack("<I", data[0x50:0x54])[0] != len(var):
+        errs.append(f"variant_len 字段不是 {len(var)}")
+    if data[0x54:0x54 + len(var)] != var:
+        errs.append("variant 段内容不匹配")
+    if struct.unpack("<II", data[ie_off:ie_off + 8]) != (1, BODY_SIZE):
+        errs.append(f"IE 标记 (1, 0x20000) 不在 0x{ie_off:x}")
+    body = data[ie_off + 8:]
     ck = bdf_xor(body)
     if ck != BDF_CHECKSUM_GOAL:
         errs.append(f"body XOR = 0x{ck:04x}，期望 0x{BDF_CHECKSUM_GOAL:04x}")
@@ -96,20 +113,27 @@ def verify(data: bytes, board_id: int) -> list[str]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="构造 ath11k board-2.bin 容器")
+    ap = argparse.ArgumentParser(description="构造 ath11k board-2.bin 容器（官方格式）")
     ap.add_argument("--body", required=True, help="本机裸 BDF（caldata_*.bin，131072 字节）")
-    ap.add_argument("--board-id", type=int, required=True, help="如 5G=80, 2.4G=16")
+    ap.add_argument("--variant", default="H3C-RC3000", help="DT 里 qcom,ath11k-calibration-variant 的值")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    body = Path(args.body).read_bytes()
+    body = bytearray(Path(args.body).read_bytes())
+    if len(body) != BODY_SIZE:
+        print(f"错误: body 大小 {len(body)} != {BODY_SIZE}", file=sys.stderr)
+        return 2
+    if bdf_xor(body) != BDF_CHECKSUM_GOAL:
+        fix_checksum(body)
+        print("注: body XOR 已自动修正为 0xFFFF")
+
     try:
-        out = build(body, args.board_id)
+        out = build(bytes(body), args.variant)
     except ValueError as e:
         print(f"错误: {e}", file=sys.stderr)
         return 2
 
-    errs = verify(out, args.board_id)
+    errs = verify(out, args.variant)
     if errs:
         for e in errs:
             print(f"自检失败: {e}", file=sys.stderr)
@@ -117,10 +141,9 @@ def main() -> int:
 
     Path(args.out).write_bytes(out)
     print(f"已生成 {args.out}")
-    print(f"  board-id : {args.body} -> {args.board_id}")
-    print(f"  总长     : {len(out)}")
+    print(f"  variant  : {args.variant}")
+    print(f"  总长     : {len(out)} (官方样本 131188)")
     print(f"  body XOR : 0x{bdf_xor(body):04x} (有效)")
-    import hashlib
     print(f"  SHA-256  : {hashlib.sha256(out).hexdigest()}")
     return 0
 

@@ -94,6 +94,10 @@ def main() -> int:
 
     try:
         while True:
+            # [修复] recv_file 里 settimeout(20) 会泄漏到主循环：
+            # 20 秒内没有新上传就 TimeoutError 未捕获 → 整进程崩溃。
+            # 每轮回主循环前恢复阻塞模式。
+            sock.settimeout(None)
             data, addr = sock.recvfrom(1500)
             if len(data) < 4:
                 continue
