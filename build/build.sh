@@ -74,6 +74,32 @@ mkdir -p "$WIFI_DIR/files"
 cp -f "$ROOT/openwrt/board/board-h3c_rc3000.ipq5018" "$WIFI_DIR/files/" 2>/dev/null || true
 cp -f "$ROOT/openwrt/board/board-h3c_rc3000.qcn6122" "$WIFI_DIR/files/" 2>/dev/null || true
 
+# ---- 网口分配（02_network + uci-defaults 双保险）----
+# [实测修复] QCA8337 五个 PHY 全部注册为 DSA 口 lan1-lan4（RC3000 丝印
+# 与交换机端口号错位，全并入 LAN 保证任意物理口可用），WAN 暂用 eth0
+# （dp1/内置 GE PHY）。02_network 在 initramfs/firstboot 由
+# config_generate 消费；uci-defaults 在刷写后的首次 boot 再兜底一次。
+NET="$SRC/target/linux/qualcommax/base-files/etc/board.d/02_network"
+if [[ -f "$NET" ]] && ! grep -q "h3c,rc3000" "$NET"; then
+  echo ">>> 注入 02_network case (h3c,rc3000)"
+  # 找最后一个顶层 esac（case 块结束行），在其前插入我们的 case。
+  LINE="$(grep -n '^esac' "$NET" | tail -1 | cut -d: -f1)"
+  if [[ -n "$LINE" ]]; then
+    awk -v n="$LINE" 'NR==n{print "h3c,rc3000)"; print "\tucidef_set_interfaces_lan_wan \"lan1 lan2 lan3 lan4\" \"eth0\""; print "\t;;"} {print}' "$NET" > "$NET.tmp" \
+      && mv "$NET.tmp" "$NET" \
+      || echo "warn: 02_network 注入失败（awk 异常），initramfs 网口可能为默认分配"
+  else
+    echo "warn: 02_network 中未找到顶层 esac，跳过注入"
+  fi
+else
+  echo ">>> 02_network 已含 h3c,rc3000 或文件缺失，跳过"
+fi
+
+UCI_DIR="$SRC/target/linux/qualcommax/base-files/etc/uci-defaults"
+mkdir -p "$UCI_DIR"
+cp -f "$ROOT/openwrt/base-files/uci-defaults/99-h3c-rc3000-network" "$UCI_DIR/" \
+  || echo "warn: uci-defaults 拷贝失败"
+
 echo ">>> 注册 ipq-wifi board 包 (h3c_rc3000)"
 echo "    —— 必须同时做两步，否则 metadata 扫描报 'Package/ipq-wifi-h3c_rc3000 is missing the TITLE field'："
 echo "       1) 加入 ALLWIFIBOARDS 列表；2) 调用 generate-ipq-wifi-package 宏生成带 TITLE 的 Package 定义"

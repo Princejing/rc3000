@@ -237,6 +237,17 @@
 	// 实测：/proc/device-tree/soc/mdio@90000/phy-reset-gpio = <&tlmm 26 0>
 	reset-gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
 
+	/*
+	 * [实测 -22 修复] ipq4019-mdio 驱动 probe 时先读 MDIO_MODE_REG
+	 * 推算 MDC 分频，但此刻 GCC_MDIO1_AHB_CLK 尚未使能、且寄存器残留
+	 * U-Boot 的非标准 div 值 → set_div 在 {8,16,...,256} 找不到匹配
+	 * → -EINVAL(-22)，mdio1 整个死掉、QCA8337 无法注册。
+	 * 写死 clock-frequency 后驱动直接采用该值（select_mdc_rate 首分支
+	 * return），不再读寄存器。3125000 = 100MHz/32，落在驱动合法分频
+	 * 集合内且与实测 clk rate(99999999) 精确整除。
+	 */
+	clock-frequency = <3125000>;
+
 	qca8337_0: ethernet-phy@0 {
 		reg = <0>;
 	};
@@ -249,35 +260,53 @@
 		reg = <2>;
 	};
 
+	// QCA8337 Phy3（U-Boot 实测 "Port4 Up" 即此口，丝印 LAN3）
+	qca8337_3: ethernet-phy@3 {
+		reg = <3>;
+	};
+
+	// QCA8337 Phy4（与 IPQ5018 内置 GE PHY 级联的对端）
+	qca8337_4: ethernet-phy@4 {
+		reg = <4>;
+	};
+
 	switch1: ethernet-switch@17 {
 		compatible = "qca,qca8337";
 		reg = <17>;
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		ethernet-ports {
+		// [实测修复] qca8k/DSA 驱动要求子节点名为 "ports"，
+		// 之前写成 "ethernet-ports" 导致交换机端口无法注册。
+		ports {
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			ethernet-port@1 {
+			port@1 {
 				reg = <1>;
 				label = "lan1";
 				phy-handle = <&qca8337_0>;
 			};
 
-			ethernet-port@2 {
+			port@2 {
 				reg = <2>;
 				label = "lan2";
 				phy-handle = <&qca8337_1>;
 			};
 
-			ethernet-port@3 {
+			port@3 {
 				reg = <3>;
 				label = "lan3";
 				phy-handle = <&qca8337_2>;
 			};
 
-			ethernet-port@6 {
+			port@4 {
+				reg = <4>;
+				label = "lan4";
+				phy-handle = <&qca8337_3>;
+			};
+
+			port@6 {
 				reg = <6>;
 				phy-mode = "sgmii";
 				ethernet = <&dp2>;
@@ -361,18 +390,17 @@
 		/*   reserved:	*/	0 0>;
 };
 
-// BDF 加载策略（两档，先试 A，不行再退回 B）
+// BDF 加载策略（实测已切到 B 方案）
 //
-// A. qcom,bdf-addr —— 与同构模板 CMCC MR3000D-CI 一致，从预留内存读 BDF。
-//    前提是原厂 U-Boot 会把 BDF 预填到该地址（MR3000D-CI 就是这么工作的）。
-//    本机原厂走的是 QSDK cnss 文件加载，U-Boot 是否预填没有实锤，
-//    所以下面先按 A 写；若启动后 dmesg 里 ath11k 报 BDF/board 失败，
-//    就删掉这两行换成 B。
+// A. qcom,bdf-addr（已弃用）：2026-10-08 实机 initramfs 启动，
+//    dmesg 报 "failed to fetch board data ... board-2.bin"（2.4G 直接
+//    找不到匹配，5G QCN6102 固件 USER-PD 初始化卡死看门狗崩溃），
+//    证实原厂 U-Boot 未把 BDF 预填到预留地址，A 方案不成立。
 //
-// B. 标准 firmware 路径 —— 不写 bdf-addr，ath11k 改读
+// B. 标准 firmware 路径（当前方案）—— 不写 bdf-addr，ath11k 读
 //      /lib/firmware/ath11k/IPQ5018/hw1.0/board-2.bin   (2.4G)
 //      /lib/firmware/ath11k/QCN6122/hw1.0/board-2.bin   (5G)
-//    文件已经用本机 caldata 构造好，见 openwrt/board/。
+//    文件已用本机 caldata 构造好，经 ipq-wifi 打包进镜像，见 openwrt/board/。
 
 &wifi {
 	// IPQ5018 集成 2.4G
@@ -381,7 +409,6 @@
 	qcom,rproc = <&q6_wcss_pd1>;
 	qcom,ath11k-calibration-variant = "H3C-RC3000";
 	qcom,ath11k-fw-memory-mode = <1>;
-	qcom,bdf-addr = <0x4c400000>;
 };
 
 &wifi1 {
@@ -392,5 +419,4 @@
 	qcom,userpd-subsys-name = "q6v5_wcss_userpd2";
 	qcom,ath11k-calibration-variant = "H3C-RC3000";
 	qcom,ath11k-fw-memory-mode = <1>;
-	qcom,bdf-addr = <0x4d100000>;
 };

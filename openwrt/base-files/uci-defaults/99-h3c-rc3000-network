@@ -1,0 +1,15 @@
+#!/bin/sh
+# H3C RC3000 网口分配（首次启动执行）
+#
+# DSA 体系下五个 QCA8337 物理口全部注册为 lan1-lan4（RC3000 丝印口
+# 与交换机端口号实测错位，先全部并入 LAN 保证任意口可用）。
+# WAN 暂用 eth0（IPQ5018 内置 GE PHY 级联口，对应物理 WAN 丝印；
+# 若实机 WAN 口实为 QCA8337 某口，后续按实测调整）。
+
+board=$(board_name)
+
+[ "$board" = "h3c,rc3000" ] || exit 0
+
+ucidef_set_interfaces_lan_wan "lan1 lan2 lan3 lan4" "eth0"
+
+exit 0
